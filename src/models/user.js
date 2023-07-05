@@ -26,8 +26,7 @@ const User = db.sequelize.define("users", {
     },
     profile_pic : {
         type : db.Sequelize.STRING.BINARY(100),
-        allowNull : false,
-        defaultValue : 2
+        allowNull : true
     },
     isVerified : {
         type : db.Sequelize.BOOLEAN,

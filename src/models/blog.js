@@ -40,7 +40,7 @@ const Blog = db.sequelize.define("blogs", {
     },
     blog_pic : {
         type : db.Sequelize.STRING.BINARY(100),
-        allowNull : false,
+        allowNull : true,
     },
     
 })

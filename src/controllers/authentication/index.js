@@ -1,7 +1,7 @@
 import User from "../../models/user.js"
 import { hashPassword, comparePassword } from "../../helpers/encryption.js"
 import { createToken } from "../../helpers/token.js"
-import { LoginValidationSchema, RegisterValidationSchema, IsEmail } from "./validation.js"
+import { LoginValidationSchema, RegisterValidationSchema, IsEmail, changeUsernameSchema, changePasswordSchema, changeEmailSchema, changePhoneSchema } from "./validation.js"
 
 // @register process
 export const register = async (req, res) => {
@@ -91,6 +91,202 @@ export const getUsers = async (req, res) => {
 
         // @return response
         res.status(200).json({ users })
+    } catch (error) {
+        console.log(error)
+        res.status(500).json({
+            message: "Something went wrong",
+            error : error?.message || error
+        });
+    }
+}
+
+export const forgotPassword = async (req, res) => {
+    try {
+        const { email } = req.body;
+        
+        await changeEmailSchema.validate(email);
+
+        const users = await User?.findOne(
+            { where : { email : email } }
+        );
+
+        if(!user){
+            res.status(500).json({
+            message : "Email Not Found",
+            error : error?.message || error
+        });
+        }
+
+        res.status(200).json({ 
+            message : "Check Your Email",
+            users 
+        })
+    } catch (error) {
+        console.log(error)
+        res.status(500).json({
+            message : "Something went wrong",
+            error : error?.message || error
+        });
+    }
+}
+
+export const verificationUser = async (req, res) => {
+    try {
+        const { id_user } = req.body;
+        
+        const users = await User?.update(
+            { isVerified: 1 }, 
+            { 
+                where: {
+                    user_id: id_user
+                }
+            }
+        );
+
+        res.status(200).json({ 
+            message : "Verification Success",
+            users 
+        })
+    } catch (error) {
+        console.log(error)
+        res.status(500).json({
+            message: "Something went wrong",
+            error : error?.message || error
+        });
+    }
+}
+
+export const changeUsername = async (req, res) => {
+    try {
+        const { username, id_user} = req.body;
+
+        await changeUsernameSchema.validate(username);
+        
+        const users = await User?.update(
+            { username: username }, 
+            { 
+                where: {
+                    user_id: id_user
+                }
+            }
+        );
+
+        res.status(200).json({ 
+            message : "Changed Username Success, Please Login Again",
+            users 
+        })
+    } catch (error) {
+        console.log(error)
+        res.status(500).json({
+            message: "Something went wrong",
+            error : error?.message || error
+        });
+    }
+}
+
+export const changePassword = async (req, res) => {
+    try {
+        const { password, id_user} = req.body;
+
+        await changePasswordSchema.validate(password);
+        
+        const hashedPassword = hashPassword(password);
+
+        const users = await User?.update(
+            { password: hashedPassword }, 
+            { 
+                where: {
+                    user_id: id_user
+                }
+            }
+        );
+
+        res.status(200).json({ 
+            message : "Changed Password Success, Please Login Again",
+            users 
+        })
+    } catch (error) {
+        console.log(error)
+        res.status(500).json({
+            message: "Something went wrong",
+            error : error?.message || error
+        });
+    }
+}
+
+export const changeEmail = async (req, res) => {
+    try {
+        const { email, id_user} = req.body;
+
+        await changeEmailSchema.validate(email);
+        
+        const users = await User?.update(
+            { email: email }, 
+            { 
+                where: {
+                    user_id: id_user
+                }
+            }
+        );
+
+        res.status(200).json({ 
+            message : "Changed Email Success, Please Check Your Email",
+            users 
+        })
+    } catch (error) {
+        console.log(error)
+        res.status(500).json({
+            message: "Something went wrong",
+            error : error?.message || error
+        });
+    }
+}
+
+export const changePhone = async (req, res) => {
+    try {
+        const { phone, id_user} = req.body;
+        
+        await changePhoneSchema.valideate(req.body);
+
+        const users = await User?.update(
+            { phone: phone }, 
+            { 
+                where: {
+                    user_id: id_user
+                }
+            }
+        );
+
+        res.status(200).json({ 
+            message : "Changed Phone Success, Please Login Again",
+            users 
+        })
+    } catch (error) {
+        console.log(error)
+        res.status(500).json({
+            message: "Something went wrong",
+            error : error?.message || error
+        });
+    }
+}
+
+export const changeProfile = async (req, res) => {
+    try {
+        const { picture, id_user} = req.body;
+        
+        const users = await User?.update(
+            { profile_pic: picture }, 
+            { 
+                where: {
+                    user_id: id_user
+                }
+            }
+        );
+
+        res.status(200).json({ 
+            message : "Change Profile Picture Success",
+            users 
+        })
     } catch (error) {
         console.log(error)
         res.status(500).json({
