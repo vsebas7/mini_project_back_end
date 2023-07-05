@@ -19,15 +19,4 @@ function apiKeyValidator (req, res, next) {
     next()
 }
 
-export const tokenValidator = async (req, res) => {
-   try {
-        const QUERY = 
-        "SELECT token_user FROM mini_project_bakcend.users WHERE user.id = ;"
-        const [rows, fields] = await db.execute(QUERY)
-
-        res.status(201).json({ message: "Expense created successfully" })
-    } catch (error) {
-        console.log(error);
-        res.status(500).json({ message: "Server Error" })
-    }
-}
+export default apiKeyValidator
