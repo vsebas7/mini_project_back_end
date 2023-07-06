@@ -1,20 +1,24 @@
-import User from "../../models/user.js"
+import { User } from "../../models/all_models.js"
 import { hashPassword, comparePassword } from "../../helpers/encryption.js"
-import { createToken } from "../../helpers/token.js"
-import { LoginValidationSchema, RegisterValidationSchema, IsEmail, changeUsernameSchema, changePasswordSchema, changeEmailSchema, changePhoneSchema } from "./validation.js"
+import { createToken, verifyToken } from "../../helpers/token.js"
+import { 
+    LoginValidationSchema, 
+    RegisterValidationSchema, 
+    IsEmail, 
+    changeUsernameSchema, 
+    changePasswordSchema, 
+    changeEmailSchema, 
+    changePhoneSchema 
+} from "./validation.js"
 
-// @register process
 export const register = async (req, res) => {
     try {
-        // @validation
         const { username, password, email, phone } = req.body;
         await RegisterValidationSchema.validate(req.body);
 
-        // @check if user already exists
         const userExists = await User?.findOne({ where: { username, email } });
         if (userExists) return res.status(400).json({ message: "User already exists" });
 
-        // @create user -> encypt password
         const hashedPassword = hashPassword(password);
         const user = await User?.create({
             username,
@@ -23,19 +27,32 @@ export const register = async (req, res) => {
             phone
         });
 
-        // @delete password from response
         delete user?.dataValues?.password;
 
-        // @genearte access token
-        const accessToken = createToken({ id: user?.dataValues?.id, role : user?.dataValues?.role });
+        const accessToken = createToken({ 
+            id: userExists?.dataValues?.id, 
+            username : user?.dataValues?.username 
+        });
 
-        // @return response
         res.header("Authorization", `Bearer ${accessToken}`)
             .status(200)
             .json({
             message: "User created successfully",
             user
         });
+
+        const mailOptions = {
+            from: config.GMAIL,
+            to: email,
+            subject: "Verification",
+            html: `<h1>Click <a href="http://localhost:5000/api/auth/verification/${accessToken}">here</a> to verify your account</h1>`
+        }
+
+        transporter.sendMail(mailOptions, (error, info) => {
+            if (error) throw error;
+            console.log("Email sent: " + info.response);
+        })
+
     } catch (error) {
         console.log(error)
         res.status(500).json({
@@ -45,32 +62,27 @@ export const register = async (req, res) => {
     }
 }
 
-// @login process
 export const login = async (req, res) => {
     try {
-        // @validation, we assume that username will hold either username or email
         const { username, password } = req.body;
         await LoginValidationSchema.validate(req.body);
 
-        // @check if username is email
-        // const isAnEmail = await IsEmail(username);
-        // const query = isAnEmail ? { email : username } : { username };
+        const isAnEmail = await IsEmail(username);
+        const query = isAnEmail ? { email : username } : { username };
 
-        // @check if user exists
-        const userExists = await User?.findOne({ where: { username } });
+        const userExists = await User?.findOne({ where: query });
         if (!userExists) return res.status(400).json({ message: "User does not exists" });
 
-        // @check if password is correct
         const isPasswordCorrect = comparePassword(password, userExists?.dataValues?.password);
         if (!isPasswordCorrect) return res.status(400).json({ message: "Password is incorrect" });
 
-        // @generate access token
-        const accessToken = createToken({ id: userExists?.dataValues?.id, role : userExists?.dataValues?.role });
+        const accessToken = createToken({ 
+            id: userExists?.dataValues?.id, 
+            username : userExists?.dataValues?.username 
+        });
 
-        // @delete password from response
         delete userExists?.dataValues?.password;
 
-        // @return response
         res.header("Authorization", `Bearer ${accessToken}`)
             .status(200)
             .json({ user : userExists })
@@ -83,13 +95,16 @@ export const login = async (req, res) => {
     }
 }
 
-// @get users data
 export const getUsers = async (req, res) => {
     try {
-        // @get users
-        const users = await User?.findAll({ attributes : { exclude : ["password"] } });
+        const users = await User?.findAll(
+            { 
+                attributes : {
+                    exclude : ["password"]
+                }
+            }
+        );
 
-        // @return response
         res.status(200).json({ users })
     } catch (error) {
         console.log(error)
@@ -104,26 +119,22 @@ export const forgotPassword = async (req, res) => {
     try {
         const { email } = req.body;
         
-        await changeEmailSchema.validate(email);
+        await changeEmailSchema.validate(req.body);
 
-        const users = await User?.findOne(
+        const user = await User?.findOne(
             { where : { email : email } }
         );
 
         if(!user){
-            res.status(500).json({
-            message : "Email Not Found",
-            error : error?.message || error
-        });
-        }
+            throw ({status : 404, message : "Email not found"})
+        };
 
         res.status(200).json({ 
             message : "Check Your Email",
-            users 
+            user 
         })
     } catch (error) {
-        console.log(error)
-        res.status(500).json({
+        res.status(404).json({
             message : "Something went wrong",
             error : error?.message || error
         });
@@ -132,24 +143,23 @@ export const forgotPassword = async (req, res) => {
 
 export const verificationUser = async (req, res) => {
     try {
-        const { id_user } = req.body;
-        
-        const users = await User?.update(
-            { isVerified: 1 }, 
+        const { token } = req.params;
+
+        const decodedToken = verifyToken(token);
+
+        await User?.update(
+            { isVerified : 1 }, 
             { 
-                where: {
-                    user_id: id_user
-                }
+                where : { 
+                    id : decodedToken?.id 
+                } 
             }
         );
 
-        res.status(200).json({ 
-            message : "Verification Success",
-            users 
-        })
+        res.status(200).json({ message : "Account verified successfully" })
     } catch (error) {
         console.log(error)
-        res.status(500).json({
+        res.status(404).json({
             message: "Something went wrong",
             error : error?.message || error
         });
@@ -158,22 +168,25 @@ export const verificationUser = async (req, res) => {
 
 export const changeUsername = async (req, res) => {
     try {
-        const { username, id_user} = req.body;
+        const token = req.headers.authorization?.split(" ")[1];
+        const decoded = verifyToken(token)
+        const { id } = decoded
 
-        await changeUsernameSchema.validate(username);
+        const { username } = req.body;
+
+        await changeUsernameSchema.validate(req.body);
         
-        const users = await User?.update(
+        await User?.update(
             { username: username }, 
             { 
                 where: {
-                    user_id: id_user
+                    id: id
                 }
             }
         );
 
         res.status(200).json({ 
             message : "Changed Username Success, Please Login Again",
-            users 
         })
     } catch (error) {
         console.log(error)
@@ -186,28 +199,31 @@ export const changeUsername = async (req, res) => {
 
 export const changePassword = async (req, res) => {
     try {
-        const { password, id_user} = req.body;
+        const token = req.headers.authorization?.split(" ")[1];
+        const decoded = verifyToken(token)
+        const { id } = decoded
 
-        await changePasswordSchema.validate(password);
+        const { password } = req.body;
+
+        await changePasswordSchema.validate(req.body);
         
         const hashedPassword = hashPassword(password);
 
-        const users = await User?.update(
+        await User?.update(
             { password: hashedPassword }, 
             { 
                 where: {
-                    user_id: id_user
+                    id: id
                 }
             }
         );
 
         res.status(200).json({ 
             message : "Changed Password Success, Please Login Again",
-            users 
         })
     } catch (error) {
         console.log(error)
-        res.status(500).json({
+        res.status(404).json({
             message: "Something went wrong",
             error : error?.message || error
         });
@@ -216,26 +232,29 @@ export const changePassword = async (req, res) => {
 
 export const changeEmail = async (req, res) => {
     try {
-        const { email, id_user} = req.body;
+        const token = req.headers.authorization?.split(" ")[1];
+        const decoded = verifyToken(token)
+        const {id} = decoded
 
-        await changeEmailSchema.validate(email);
+        const { email } = req.body;
+
+        await changeEmailSchema.validate(req.body);
         
-        const users = await User?.update(
+        await User?.update(
             { email: email }, 
             { 
                 where: {
-                    user_id: id_user
+                    id: id
                 }
             }
         );
 
         res.status(200).json({ 
-            message : "Changed Email Success, Please Check Your Email",
-            users 
+            message : "Changed Email Success, Please Check Your Email", 
         })
     } catch (error) {
         console.log(error)
-        res.status(500).json({
+        res.status(404).json({
             message: "Something went wrong",
             error : error?.message || error
         });
@@ -244,26 +263,29 @@ export const changeEmail = async (req, res) => {
 
 export const changePhone = async (req, res) => {
     try {
-        const { phone, id_user} = req.body;
-        
-        await changePhoneSchema.valideate(req.body);
+        const token = req.headers.authorization?.split(" ")[1];
+        const decoded = verifyToken(token)
+        const {id} = decoded
 
-        const users = await User?.update(
+        const { phone } = req.body;
+        
+        await changePhoneSchema.validate(req.body);
+
+        await User?.update(
             { phone: phone }, 
             { 
                 where: {
-                    user_id: id_user
+                    id: id
                 }
             }
         );
 
         res.status(200).json({ 
             message : "Changed Phone Success, Please Login Again",
-            users 
         })
     } catch (error) {
         console.log(error)
-        res.status(500).json({
+        res.status(404).json({
             message: "Something went wrong",
             error : error?.message || error
         });
@@ -272,13 +294,17 @@ export const changePhone = async (req, res) => {
 
 export const changeProfile = async (req, res) => {
     try {
-        const { picture, id_user} = req.body;
+        const token = req.headers.authorization?.split(" ")[1];
+        const decoded = verifyToken(token)
+        const {id} = decoded
+
+        const { picture } = req.body;
         
-        const users = await User?.update(
+        await User?.update(
             { profile_pic: picture }, 
             { 
                 where: {
-                    user_id: id_user
+                    id: id
                 }
             }
         );
@@ -289,7 +315,7 @@ export const changeProfile = async (req, res) => {
         })
     } catch (error) {
         console.log(error)
-        res.status(500).json({
+        res.status(404).json({
             message: "Something went wrong",
             error : error?.message || error
         });

@@ -2,7 +2,7 @@ import dotenv from "dotenv";
 dotenv.config();
 
 // @create db configuration
-export default {
+const db_config = Object.freeze({
     development: {
         username: process.env.DB_USER,
         password: process.env.DB_PASS,
@@ -24,5 +24,11 @@ export default {
         host: process.env.DB_HOST,
         dialect: "mysql"
     }
-}
+})
+
+export const JWT_SECRET_KEY = process.env.JWT_SECRET_KEY
+export const GMAIL_APP_KEY = process.env.GMAIL_APP_KEY
+export const GMAIL = process.env.GMAIL
+export const OTP_SECRET_KEY = process.env.OTP_SECRET_KEY
   
+export default db_config[process.env.NODE_ENV || 'development']

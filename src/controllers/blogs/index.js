@@ -1,5 +1,9 @@
-import Blog from "../../models/blog.js"
+import sequelize from "sequelize";
+import { Blog, Category, Like, User} from "../../models/all_models.js"
 import { PublishBlogSchema } from "./validation.js";
+import moment from "moment";
+import { verifyToken } from "../../helpers/token.js";
+
 
 export const getBlogs = async (req, res) => {
     try {
@@ -45,13 +49,15 @@ export const publishBlog = async (req, res) => {
 
 export const deleteBlogs = async (req, res) => {
     try {
-        const { id_blog } = req.body;
+        const { id_blog } = req.params;
 
-        const blogs = await Blog?.destroy({
-            where : {blog_id : id_blog}
+        await Blog?.destroy({
+            where : {id : id_blog}
         });
 
-        res.status(200).json({ blogs })
+        res.status(200).json({ 
+            message : `Blog dengan id = ${id_blog} berhasil di delete`
+        })
     } catch (error) {
         console.log(error)
         res.status(500).json({
@@ -63,11 +69,17 @@ export const deleteBlogs = async (req, res) => {
 
 export const likeBlog = async (req, res) => {
     try {
-        const { id_user, id_blog } = req.body;
-        const like_check = await Blog?.findAll({
+        const { id_blog } = req.params;
+
+        const token = req.headers.authorization?.split(" ")[1];
+        const decoded = verifyToken(token)
+
+        const date = moment();
+
+        const like_check = await Like?.findAll({
             where: {
-                user_id: id_user,
-                blog_id: id_blog
+                userId: decoded.id,
+                blogId: id_blog
             }
         });
 
@@ -77,14 +89,15 @@ export const likeBlog = async (req, res) => {
             })
         }
         
-        const blogs = await Blog?.create({
-            user_id : id_user,
-            blog_id : id_blog
+        const like = await Like?.create({
+            userId : decoded.id,
+            blogId : id_blog,
+            date 
         })
 
         res.status(200).json({
             message : "Like Added",
-            blogs
+            like
         })
     } catch (error) {
         console.log(error)
@@ -112,13 +125,20 @@ export const categoryBlogs = async (req, res) =>{
 
 export const favoriteBlogs = async (req, res) =>{
     try {
-        const favorite = await likes?.findAll({
-            attributes : [sequelize.fn('COUNT', sequelize.col('id')), 'total_likes'],
-            group : 'blog_id',
-            order : ['total_likes', 'DESC']
+        const favorite = await Like?.findAll({
+            attributes: [
+                'blogId',
+                [sequelize.fn('COUNT', sequelize.col(`likes.id`)), 'total_likes'],
+            ],
+            group : 'blogId',
+            include : Blog,
+            order : [['total_likes','DESC']]
         });
 
-        res.status(200).json({ favorite })
+        res.status(200).json({ 
+            message : "Data Berhasil dimuat",
+            favorite 
+        })
 
     } catch (error) {
         console.log(error)
@@ -131,14 +151,23 @@ export const favoriteBlogs = async (req, res) =>{
 
 export const userFavoriteBlogs = async (req, res) =>{
     try {
-        const { id_user } = req.body;
-        const UserFavorite = await likes?.findAll({
-            attributes : [sequelize.fn('COUNT', sequelize.col('id')), 'total_likes'],
-            group : 'blog_id',
-            where :{user_id : id_user}
+        const token = req.headers.authorization?.split(" ")[1];
+        const decoded = verifyToken(token)
+        const {id} = decoded
+        const UserFavorite = await Like?.findAll({
+            attributes : [
+                'blogId',
+                [sequelize.fn('COUNT', sequelize.col(`likes.id`)), 'total_likes'],
+            ],
+            group : 'blogId',
+            where :{userId : id},
+            include : Blog,
         });
 
-        res.status(200).json({ UserFavorite })
+        res.status(200).json({ 
+            message : "Data Berhasil dimuat",
+            UserFavorite 
+        })
 
     } catch (error) {
         console.log(error)
@@ -151,12 +180,17 @@ export const userFavoriteBlogs = async (req, res) =>{
 
 export const userBlogs = async (req, res) =>{
     try {
-        const { id_user } = req.body;
-        const UserBlog = await blog?.findAll({
-            where :{user_id : id_user}
+        const token = req.headers.authorization?.split(" ")[1];
+        const decoded = verifyToken(token)
+        const {id} = decoded
+        const UserBlog = await Blog?.findAll({
+            where :{userId : id}
         });
 
-        res.status(200).json({ UserBlog })
+        res.status(200).json({ 
+            message : "Data Berhasil dimuat",
+            UserBlog 
+        })
 
     } catch (error) {
         console.log(error)

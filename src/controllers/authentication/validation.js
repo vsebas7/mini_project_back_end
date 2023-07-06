@@ -1,4 +1,6 @@
 import * as Yup from "yup"
+import YupPassword from 'yup-password';
+YupPassword(Yup);
 
 export const RegisterValidationSchema = Yup.object({
     username : Yup.string().required("Username is required"),
@@ -17,7 +19,7 @@ export const EmailValidationSchema = Yup.object({
 })
 
 export const IsEmail = async (email) => {
-    return await EmailValidationSchema.validate({ email })
+    return await EmailValidationSchema.isValid({ email })
 }
 
 export const changePasswordSchema = Yup.object({
