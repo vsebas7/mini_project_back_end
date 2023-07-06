@@ -95,6 +95,32 @@ export const login = async (req, res) => {
     }
 }
 
+export const keepLogin = async (req, res) => {
+    try {
+        const token = req.headers.authorization?.split(" ")[1];
+        const decoded = verifyToken(token)
+        const { id } = decoded
+
+        const users = await User?.findAll(
+            { 
+                where : {
+                    id : id
+                },
+                attributes : {
+                    exclude : ["password"]
+                }
+            }
+        );
+        res.status(200).json({ users })
+    } catch (error) {
+        console.log(error)
+        res.status(500).json({
+            message: "Something went wrong",
+            error : error?.message || error
+        });
+    }
+}
+
 export const getUsers = async (req, res) => {
     try {
         const users = await User?.findAll(

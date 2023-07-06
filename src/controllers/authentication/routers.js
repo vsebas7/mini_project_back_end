@@ -9,6 +9,7 @@ const router = Router()
 router.get("/", AuthControllers.getUsers) //done
 router.post("/register", AuthControllers.register) //done
 router.post("/login", AuthControllers.login) //done
+router.get("/keep_login", AuthControllers.keepLogin) //done
 router.put("/forgot_password", AuthControllers.forgotPassword) //done
 router.post("/users/verification/:token", verifyUser, AuthControllers.verificationUser) //done
 router.patch("/users/change_username", verifyUser, AuthControllers.changeUsername)//done
