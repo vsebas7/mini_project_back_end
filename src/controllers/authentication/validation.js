@@ -25,7 +25,6 @@ export const IsEmail = async (email) => {
 export const changePasswordSchema = Yup.object({
   password: Yup.string()
     .required("Password is required")
-    .notOneOf([Yup.ref('oldpassword')],"New and Current Password can't be the same")
     .min(6, 'password must contain 6 or more characters with at least one of each: uppercase, special character')
     .minUppercase(1, 'password must contain at least 1 upper case letter')
     .minSymbols(1, 'password must contain at least 1 special character')
@@ -42,7 +41,6 @@ export const changeEmailSchema = Yup.object().shape({
 
 export const changePhoneSchema = Yup.object().shape({
   phone: Yup.string()
-    .matches(/[0-9]/,'phone must be a number')
-    .matches(/0[0-9]/,'phone must start with 0')
+    .matches(/0[0-9]/,'phone must be a number and start with 0')
     .min(10,'phone must contain 10 or more digits'),
 });

@@ -87,7 +87,7 @@ export const User = db.sequelize.define("users", {
         allowNull : false
     },
     profile_pic : {
-        type : db.Sequelize.STRING.BINARY,
+        type : db.Sequelize.TEXT('long'),
         allowNull : true
     },
     isVerified : {
