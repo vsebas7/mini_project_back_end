@@ -1,98 +1,220 @@
 import sequelize from "sequelize";
+import { ValidationError } from "yup"
+import * as errorMiddleware from "../../middleware/error.handler.js"
 import { Blog, Category, Like, User} from "../../models/all_models.js"
+import * as config from "../../config/index.js"
 import { PublishBlogSchema } from "./validation.js";
 import moment from "moment";
-import { verifyToken } from "../../helpers/token.js";
+import db from "../../models/index.js"
+import cloudinary from "cloudinary"
 
-
-export const getBlogs = async (req, res) => {
+export const getBlogs = async (req, res, next) => {
     try {
-        const blogs = await Blog?.findAll();
-        res.status(200).json({ blogs })
-    } catch (error) {
-        console.log(error)
-        res.status(500).json({
-            message: "Data not found",
-            error : error?.message || error
+        const { page, id_cat, sort } = req.query;
+
+        const options = {
+            offset: page > 1 ? parseInt(page - 1) * 5 : 0,
+            limit: page ? 5 : undefined,
+        }
+        if(
+            sort !== undefined && ( sort !== "DESC" || sort !== "ASC")
+        )throw ({ 
+            status : errorMiddleware.BAD_REQUEST_STATUS, 
+            message : errorMiddleware.BAD_REQUEST 
         });
+
+        const blogs = await Blog?.findAll(
+            { 
+                ...options,
+                where : id_cat ? {categoryId : id_cat} : {},
+                order : [
+                    sort ? ['createdAt', sort] : ['id', 'ASC']
+                ],
+                include : [
+                    {
+                        model: User,
+                        attributes: ['username']
+                    },
+                    {
+                        model: Category,
+                        attributes: ['name']
+                    }, 
+                    {
+                        model: Like,
+                        attributes: ['userId']
+                    }
+                ]
+            }
+        );
+
+        const total = await Blog?.count();
+
+        const pages = page ? Math.ceil(total / options.limit) : undefined;
+        
+        if(!blogs.length ) throw ({ 
+            status : errorMiddleware.NOT_FOUND_STATUS, 
+            message : errorMiddleware.DATA_NOT_FOUND 
+        });
+        res.status(200).json({ 
+            message: "Blogs fetched", 
+            data: {
+                current_page: page,
+                total_pages : pages,
+                total_blog : total,
+                blog_limit : options.limit,
+                blogs,
+            } 
+        });
+
+    } catch (error) {
+        next(error)
     }
 }
 
-export const publishBlog = async (req, res) => {
+export const publishBlog = async (req, res, next) => {
+    const transaction = await db.sequelize.transaction();
     try {
-        const { title, content, country, category, url, keywords, picture } = req.body;
-        
-        await PublishBlogSchema.validate(req.body);
+        const { data } = req.body;    
 
-        const blogs = await Blog?.create({
+        if (!req.file) {
+            return next ({ 
+                status: errorMiddleware.BAD_REQUEST_STATUS,
+                message: "Please upload an image." 
+            })
+        }
+
+        const body = JSON.parse(data);
+
+        const { 
+            title, 
+            content, 
+            country, 
+            category, 
+            url, 
+            keywords 
+        } = body
+        
+        await PublishBlogSchema.validate(body);
+        
+        const blogIsExists = await Blog?.findOne({ where : { title } });
+
+        if (blogIsExists) throw (
+            { 
+                status : errorMiddleware.BAD_REQUEST_STATUS, 
+                message : errorMiddleware.BLOG_ALREADY_EXISTS
+            }
+        );
+
+        const blog = await Blog?.create({ 
+            userId : req.user.id,
+            createdAt: moment().format(),
             title,
             content,
             country,
-            category_id : category,
+            categoryId : category,
             url,
-            keywords,
-            blog_pic : picture,
-        })
-
-        res.status(200).json({ 
-            message : "Blog published",
-            blogs 
-        })
-    } catch (error) {
-        console.log(error)
-        res.status(500).json({
-            message: "Something went wrong",
-            error : error?.message || error
+            keywords, 
+            blog_pic : req?.file?.path 
         });
+
+        res.status(200).json(
+            { 
+                type: "success", 
+                message: "Blog publish success", 
+                data: blog 
+            }
+        );
+
+        await transaction.commit();
+    } catch (error) {
+        await transaction.rollback();
+
+        cloudinary.v2.api
+            .delete_resources([`${req?.file?.filename}`],
+                { type: 'upload', resource_type: 'image' })
+
+        if (error instanceof ValidationError) {
+            return next({
+                status : errorMiddleware.BAD_REQUEST_STATUS, 
+                message : error?.errors?.[0]
+            })
+        }
+
+        next(error)
     }
 }
 
-export const deleteBlogs = async (req, res) => {
+export const deleteBlogs = async (req, res, next) => {
     try {
         const { id_blog } = req.params;
 
+        const blogIsExists = await Blog?.findOne({ 
+            where : { 
+                id : id_blog
+            } 
+        });
+
+        if (!blogIsExists) throw (
+            { 
+                status : errorMiddleware.NOT_FOUND_STATUS, 
+                message : errorMiddleware.DATA_NOT_FOUND
+            }
+        );
+        
         await Blog?.destroy({
-            where : {id : id_blog}
+            where : {
+                id : id_blog
+            }
         });
 
+        await cloudinary.v2.api
+            .delete_resources([`${blogIsExists.dataValues.blog_pic}`],
+                { type: 'upload', resource_type: 'image' })
+
         res.status(200).json({ 
-            message : `Blog dengan id = ${id_blog} berhasil di delete`
+            type : 'success',
+            message : `Blog dengan id ${id_blog} berhasil di delete`
         })
     } catch (error) {
-        console.log(error)
-        res.status(500).json({
-            message: "Data not found",
-            error : error?.message || error
-        });
+        next(error)
     }
 }
 
-export const likeBlog = async (req, res) => {
+export const likeBlog = async (req, res, next) => {
     try {
         const { id_blog } = req.params;
 
-        const token = req.headers.authorization?.split(" ")[1];
-        const decoded = verifyToken(token)
+        const blogIsExists = await Blog?.findOne({ 
+            where : { 
+                id : id_blog
+            } 
+        });
 
-        const date = moment();
+        if (!blogIsExists) throw (
+            { 
+                status : errorMiddleware.NOT_FOUND_STATUS, 
+                message : errorMiddleware.DATA_NOT_FOUND
+            }
+        );
 
         const like_check = await Like?.findAll({
             where: {
-                userId: decoded.id,
+                userId: req.user.id,
                 blogId: id_blog
             }
         });
 
-        if(like_check.length > 0){
-            res.status(500).json({
-                message : "Blog already liked"
-            })
-        }
+        if(like_check.length) throw (
+            { 
+                status : errorMiddleware.BAD_REQUEST_STATUS, 
+                message : errorMiddleware.BLOG_ALREADY_LIKE
+            }
+        );
         
         const like = await Like?.create({
-            userId : decoded.id,
+            userId : req.user.id,
             blogId : id_blog,
-            date 
+            date : moment().format()
         })
 
         res.status(200).json({
@@ -100,104 +222,136 @@ export const likeBlog = async (req, res) => {
             like
         })
     } catch (error) {
-        console.log(error)
-        res.status(500).json({
-            message: "Data not found",
-            error : error?.message || error
-        });
+        next(error)
     }
 }
 
-export const categoryBlogs = async (req, res) =>{
+export const categoryBlogs = async (req, res, next) =>{
     try {
         const category = await Category?.findAll();
 
         res.status(200).json({ category })
 
     } catch (error) {
-        console.log(error)
-        res.status(500).json({
-            message: "Data not found",
-            error : error?.message || error
-        });
+        next(error)
     }
 }
 
-export const favoriteBlogs = async (req, res) =>{
+export const favoriteBlogs = async (req, res, next) =>{
     try {
+        const { id_cat } = req.query;
         const favorite = await Like?.findAll({
             attributes: [
                 'blogId',
                 [sequelize.fn('COUNT', sequelize.col(`likes.id`)), 'total_likes'],
             ],
             group : 'blogId',
-            include : Blog,
+            include : [
+                {
+                    model : Blog,
+                    where : id_cat ? {categoryId : id_cat} : {},
+                }
+            ],
             order : [['total_likes','DESC']]
         });
 
+        if(!favorite.length) throw (
+            { 
+                status : errorMiddleware.NOT_FOUND_STATUS, 
+                message : errorMiddleware.DATA_NOT_FOUND
+            }
+        );
+
         res.status(200).json({ 
-            message : "Data Berhasil dimuat",
+            message : "success",
             favorite 
         })
 
     } catch (error) {
-        console.log(error)
-        res.status(500).json({
-            message: "Data not found",
-            error : error?.message || error
-        });
+        next(error)
     }
 }
 
-export const userFavoriteBlogs = async (req, res) =>{
+export const userFavoriteBlogs = async (req, res, next) =>{
     try {
-        const token = req.headers.authorization?.split(" ")[1];
-        const decoded = verifyToken(token)
-        const {id} = decoded
+        
         const UserFavorite = await Like?.findAll({
             attributes : [
                 'blogId',
                 [sequelize.fn('COUNT', sequelize.col(`likes.id`)), 'total_likes'],
             ],
             group : 'blogId',
-            where :{userId : id},
+            where :{
+                userId : req.user.id
+            },
             include : Blog,
         });
 
+        if(!UserFavorite.length) throw (
+            { 
+                status : errorMiddleware.NOT_FOUND_STATUS, 
+                message : errorMiddleware.DATA_NOT_FOUND
+            }
+        );
+
         res.status(200).json({ 
-            message : "Data Berhasil dimuat",
+            message : "success",
             UserFavorite 
         })
 
     } catch (error) {
-        console.log(error)
-        res.status(500).json({
-            message: "Data not found",
-            error : error?.message || error
-        });
+        next(error)
     }
 }
 
-export const userBlogs = async (req, res) =>{
+export const userBlogs = async (req, res, next) =>{
     try {
-        const token = req.headers.authorization?.split(" ")[1];
-        const decoded = verifyToken(token)
-        const {id} = decoded
+        
         const UserBlog = await Blog?.findAll({
-            where :{userId : id}
+            where :{
+                userId : req.user.id
+            }
         });
 
+        if(!UserBlog.length) throw (
+            { 
+                status : errorMiddleware.NOT_FOUND_STATUS, 
+                message : errorMiddleware.DATA_NOT_FOUND
+            }
+        );
+
         res.status(200).json({ 
-            message : "Data Berhasil dimuat",
+            message : "success",
             UserBlog 
         })
 
     } catch (error) {
-        console.log(error)
-        res.status(500).json({
-            message: "Data not found",
-            error : error?.message || error
+        next(error)
+    }
+}
+
+export const getBlogPicture = async (req, res, next) => {
+    try {
+        const { id_blog } = req.params
+        const blog = await Blog?.findOne({ 
+            where : { 
+                id : id_blog
+            } 
         });
+
+        if (!blog) throw ({ 
+            status : errorMiddleware.NOT_FOUND_STATUS, 
+            message : errorMiddleware.DATA_NOT_FOUND 
+        })
+
+        if (!blog.blog_pic) throw ({ 
+            status : errorMiddleware.NOT_FOUND_STATUS, 
+            message : "Blog Picture is empty"
+        })
+
+        res.status(200).json(config.URL_PIC + blog.blog_pic) //https://res.cloudinary.com/dpgk4f2eu/image/upload/f_auto,q_auto/v1/
+    } catch (error) {
+        next(error)
     }
 }
 

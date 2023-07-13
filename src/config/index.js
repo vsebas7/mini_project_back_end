@@ -32,5 +32,6 @@ export const GMAIL = process.env.GMAIL
 export const CLOUDINARY_CLOUD_NAME = process.env.CLOUDINARY_CLOUD_NAME
 export const CLOUDINARY_API_KEY = process.env.CLOUDINARY_API_KEY
 export const CLOUDINARY_API_SECRET = process.env.CLOUDINARY_API_SECRET
+export const URL_PIC = process.env.URL_PIC
   
 export default db_config[process.env.NODE_ENV || 'development']

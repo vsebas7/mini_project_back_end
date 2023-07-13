@@ -55,7 +55,7 @@ export const Blog = db.sequelize.define("blogs", {
         allowNull : false,
     },
     blog_pic : {
-        type : db.Sequelize.STRING.BINARY,
+        type : db.Sequelize.TEXT('long'),
         allowNull : true,
     },
     
@@ -123,14 +123,13 @@ export const Like = db.sequelize.define("likes", {
 { timestamps: false }
 )
 
-// Category.hasMany(Blog);
 
-Blog.belongsTo(Category);
-Blog.belongsTo(User);
+Blog.belongsTo(Category, {foreignKey : 'categoryId'});
+Blog.belongsTo(User, {foreignKey : 'userId'});
 Blog.hasMany(Like);
 
 User.hasMany(Like);
 User.hasMany(Blog);
 
-Like.belongsTo(User);
-Like.belongsTo(Blog);
+Like.belongsTo(Blog, {foreignKey : 'blogId'});
+Like.belongsTo(User, {foreignKey : 'userId'});

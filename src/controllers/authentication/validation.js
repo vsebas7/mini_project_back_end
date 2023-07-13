@@ -35,12 +35,9 @@ export const changeUsernameSchema = Yup.object().shape({
   .min(5,'Username minimum 5 characters'),
 });
 
-export const changeEmailSchema = Yup.object().shape({
-  email: Yup.string().email(),
-});
-
 export const changePhoneSchema = Yup.object().shape({
   phone: Yup.string()
+    .matches(/[0-9]/,'phone must be a number')
     .matches(/0[0-9]/,'phone must be a number and start with 0')
     .min(10,'phone must contain 10 or more digits'),
 });

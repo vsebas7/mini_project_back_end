@@ -7,12 +7,9 @@ export const PublishBlogSchema = Yup.object({
     .required("Content is required"),
     country: Yup.string()
     .required("Country is required"),
-    category: Yup.string()
+    category: Yup.number()
     .required("Category is required"),
+    url: Yup.string(),
     keywords: Yup.string()
-    .required("Keywords is required"),
-    picture: Yup.string()
-    .required("Picture is required"),
-    // date: Yup.string()
-    // .required("Date is required"),
+    .required("Keywords is required")
 });

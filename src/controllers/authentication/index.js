@@ -1,31 +1,40 @@
-import { User } from "../../models/all_models.js"
+import { ValidationError } from "yup"
+import { Blog, User } from "../../models/all_models.js"
 import handlebars from "handlebars"
 import fs from "fs"
 import path from "path"
-import transporter from "../../helpers/transporter.js"
 import cloudinary from "cloudinary"
+import * as validation from "./validation.js"
 import * as config from "../../config/index.js"
-import { hashPassword, comparePassword } from "../../helpers/encryption.js"
-import { createToken, createTokenLogin, verifyToken } from "../../helpers/token.js"
-import { 
-    LoginValidationSchema, 
-    RegisterValidationSchema, 
-    IsEmail, 
-    changeUsernameSchema, 
-    changePasswordSchema, 
-    changeEmailSchema, 
-    changePhoneSchema 
-} from "./validation.js"
+import transporter from "../../helpers/transporter.js"
+import * as encryption from "../../helpers/encryption.js"
+import * as tokenHelper from "../../helpers/token.js"
+import * as errorMiddleware from "../../middleware/error.handler.js"
+import db from "../../models/index.js"
+import { Op } from "sequelize";
 
-export const register = async (req, res) => {
+export const register = async (req, res, next) => {
+    const transaction = await db.sequelize.transaction();
     try {
         const { username, password, email, phone } = req.body;
-        await RegisterValidationSchema.validate(req.body);
 
-        const userExists = await User?.findOne({ where: { username, email } });
-        if (userExists) return res.status(400).json({ message: "User already exists" });
+        await validation.RegisterValidationSchema.validate(req.body);
 
-        const hashedPassword = hashPassword(password);
+        const userExists = await User?.findOne({ 
+            where: { 
+                [Op.or]: [
+                    { username },
+                    { email }
+                ]
+            } 
+        });
+
+        if (userExists) throw ({ 
+            status : errorMiddleware.BAD_REQUEST_STATUS, 
+            message : errorMiddleware.USER_ALREADY_EXISTS 
+        });
+
+        const hashedPassword = encryption.hashPassword(password);
         const user = await User?.create({
             username,
             password : hashedPassword,
@@ -35,17 +44,22 @@ export const register = async (req, res) => {
 
         delete user?.dataValues?.password;
 
-        const accessToken = createTokenLogin({ id: user?.dataValues?.id, username : user?.dataValues?.username });
+        const accessToken = tokenHelper.createToken(
+            { 
+                id: user?.dataValues?.id, 
+                username : user?.dataValues?.username 
+            }
+        );
 
-        console.log(user)
         res.header("Authorization", `Bearer ${accessToken}`)
-        .status(200)
-        .json({
-            message: "User created successfully",
-            user
-        });
+            .status(200)
+            .json({
+                message: "User created successfully",
+                user
+            });
+
         const template = fs.readFileSync(path.join(process.cwd(), "templates", "email.html"), "utf8");
-        const message  = handlebars.compile(template)({ link : `http://localhost:5000/api/auth/users/verification/${accessToken}` })
+        const message  = handlebars.compile(template)({ link : `http://localhost:3000/verification/${accessToken}` })
 
         const mailOptions = {
             from: config.GMAIL,
@@ -58,51 +72,72 @@ export const register = async (req, res) => {
             console.log("Email sent: " + info.response);
         })
 
+        await transaction.commit();
+
     } catch (error) {
-        console.log(error)
-        res.status(500).json({
-            message: "Something went wrong",
-            error : error?.message || error
-        });
+        await transaction.rollback();
+
+        if (error instanceof ValidationError) {
+            return next({
+                status : errorMiddleware.BAD_REQUEST_STATUS, 
+                message : error?.errors?.[0]
+            })
+        }
+        next(error)
     }
 }
 
-export const login = async (req, res) => {
+export const login = async (req, res, next) => {
     try {
         const { username, password } = req.body;
-        await LoginValidationSchema.validate(req.body);
+        await validation.LoginValidationSchema.validate(req.body);
 
-        const isAnEmail = await IsEmail(username);
+        const isAnEmail = await validation.IsEmail(username);
         const query = isAnEmail ? { email : username } : { username };
 
         const userExists = await User?.findOne({ where: query });
-        if (!userExists) return res.status(404).json({ message: "User does not exists" });
+        if (!userExists) throw ({ 
+            status : errorMiddleware.BAD_REQUEST_STATUS, 
+            message : errorMiddleware.USER_DOES_NOT_EXISTS 
+        })
+        
+        const isPasswordCorrect = encryption.comparePassword(password, userExists?.dataValues?.password);
+        if (!isPasswordCorrect) throw ({ 
+            status : errorMiddleware.BAD_REQUEST_STATUS,
+            message : errorMiddleware.INCORRECT_PASSWORD 
+        });
 
-        const isPasswordCorrect = comparePassword(password, userExists?.dataValues?.password);
-        if (!isPasswordCorrect) return res.status(400).json({ message: "Password is incorrect" });
-
-        const accessToken = createTokenLogin({ 
+        if(!userExists.dataValues.isVerified)throw ({ 
+            status : errorMiddleware.UNAUTHORIZED_STATUS, 
+            message : errorMiddleware.UNVERIFIED
+        })
+        
+        const accessToken = tokenHelper.createTokenLogin({ 
             id: userExists?.dataValues?.id, 
             username : userExists?.dataValues?.username 
         });
-
+        
         delete userExists?.dataValues?.password;
 
         res.header("Authorization", `Bearer ${accessToken}`)
             .status(200)
-            .json({ user : userExists })
+            .json({ 
+                user : userExists 
+            })
+
     } catch (error) {
-        console.log(error)
-        res.status(500).json({
-            message: "Something went wrong",
-            error : error?.message || error
-        });
+        if (error instanceof ValidationError) {
+            return next({ 
+                status : errorMiddleware.BAD_REQUEST_STATUS, 
+                message : error?.errors?.[0] 
+            })
+        }
+        next(error)
     }
 }
 
-export const keepLogin = async (req, res) => {
+export const keepLogin = async (req, res, next) => {
     try {
-
         const users = await User?.findAll(
             { 
                 where : {
@@ -113,57 +148,39 @@ export const keepLogin = async (req, res) => {
                 }
             }
         );
+
+        if(!users[0].dataValues.isVerified)throw ({ 
+            status : errorMiddleware.UNAUTHORIZED_STATUS, 
+            message : errorMiddleware.UNVERIFIED
+        })
         res.status(200).json({ users })
     } catch (error) {
-        console.log(error)
-        res.status(500).json({
-            message: "Something went wrong",
-            error : error?.message || error
-        });
+        next(error)
     }
 }
 
-export const getUsers = async (req, res) => {
-    try {
-        const users = await User?.findAll(
-            { 
-                attributes : {
-                    exclude : ["password"]
-                }
-            }
-        );
-
-        res.status(200).json({ users })
-    } catch (error) {
-        console.log(error)
-        res.status(500).json({
-            message: "Something went wrong",
-            error : error?.message || error
-        });
-    }
-}
-
-export const forgotPassword = async (req, res) => {
+export const forgotPassword = async (req, res, next) => {
     try {
         const { email } = req.body;
         
-        await changeEmailSchema.validate(req.body);
+        await validation.EmailValidationSchema.validate(req.body);
 
         const isUserExist = await User?.findOne(
-            { where : { email : email } }
+            { where : { email } }
         );
 
-        if(!isUserExist){
-            return res.status(404).json({ message: "Email not found" })
-        };
+        if (!isUserExist) throw ({ 
+            status : errorMiddleware.BAD_REQUEST_STATUS, 
+            message : errorMiddleware.USER_DOES_NOT_EXISTS 
+        })
 
-        const accessToken = createToken({ 
+        const accessToken = tokenHelper.createToken({ 
             id: isUserExist?.dataValues?.id, 
             username : isUserExist?.dataValues?.username 
         });
 
         const template = fs.readFileSync(path.join(process.cwd(), "templates", "email.html"), "utf8");
-        const message  = handlebars.compile(template)({ link : `http://localhost:5000/api/auth/users/verification/${accessToken}` })
+        const message  = handlebars.compile(template)({ link : `http://localhost:3000/verification/${accessToken}` })
 
         const mailOptions = {
             from: config.GMAIL,
@@ -178,20 +195,34 @@ export const forgotPassword = async (req, res) => {
 
         res.status(200).json({ 
             message : "Check Your Email to Reset Your Password",
-            isUserExist 
         })
     } catch (error) {
-        res.status(500).json({
-            message : "Something went wrong",
-            error : error?.message || error
-        });
+        if (error instanceof ValidationError) {
+            return next({ 
+                status : errorMiddleware.BAD_REQUEST_STATUS , 
+                message : error?.errors?.[0] 
+            })
+        }
+        next(error)
     }
 }
 
-export const verificationUser = async (req, res) => {
+export const verificationUser = async (req, res, next) => {
+    const transaction = await db.sequelize.transaction();
     try {
-        const { token } = req.params;
-        const decodedToken = verifyToken(token);
+        const { token } = req.body;
+        const decodedToken = tokenHelper.verifyToken(token);
+
+        const user = await User?.findOne({ 
+            where : { 
+                id : decodedToken.id 
+            } 
+        });
+
+        if (!user) throw ({ 
+            status : errorMiddleware.NOT_FOUND_STATUS, 
+            message : errorMiddleware.USER_DOES_NOT_EXISTS 
+        });
 
         await User?.update(
             { isVerified : 1 }, 
@@ -202,21 +233,32 @@ export const verificationUser = async (req, res) => {
             }
         );
 
-        res.status(200).json({ message : "Account verified successfully" })
+        res.status(200).json({ 
+            message : "Verification Account Success" 
+        })
+
+        await transaction.commit();
     } catch (error) {
-        console.log(error)
-        res.status(500).json({
-            message: "Something went wrong",
-            error : error?.message || error
-        });
+        await transaction.rollback();
+        next(error)
     }
 }
 
-export const changeUsername = async (req, res) => {
+export const changeUsername = async (req, res, next) => {
+    const transaction = await db.sequelize.transaction();
     try {
         const { username } = req.body;
 
-        await changeUsernameSchema.validate(req.body);
+        await validation.changeUsernameSchema.validate(req.body);
+
+        const usernameExists = await User?.findOne({ 
+            where: { username }
+        });
+
+        if (usernameExists) throw ({ 
+            status : errorMiddleware.BAD_REQUEST_STATUS, 
+            message : errorMiddleware.USERNAME_ALREADY_EXISTS 
+        });
 
         await User?.update(
             { 
@@ -243,13 +285,13 @@ export const changeUsername = async (req, res) => {
         
         const email = user?.dataValues?.email
         
-        const accessToken = createToken({ 
+        const accessToken = tokenHelper.createToken({ 
             id: user?.dataValues?.id, 
             username : user?.dataValues?.username 
         });
 
         const template = fs.readFileSync(path.join(process.cwd(), "templates", "email.html"), "utf8");
-        const message  = handlebars.compile(template)({ link : `http://localhost:5000/api/auth/users/verification/${accessToken}` })
+        const message  = handlebars.compile(template)({ link : `http://localhost:3000/verification/${accessToken}` })
 
         const mailOptions = {
             from: config.GMAIL,
@@ -263,24 +305,32 @@ export const changeUsername = async (req, res) => {
         })
 
         res.status(200).json({ 
-            message : "Changed Username Success, Please Verify Again",
+            message : "Change Username Success, Please Verify Again",
         })
+
+        await transaction.commit();
     } catch (error) {
-        console.log(error)
-        res.status(500).json({
-            message: "Something went wrong",
-            error : error?.message || error
-        });
+        await transaction.rollback();
+
+        if (error instanceof ValidationError) {
+            return next({
+                status : errorMiddleware.BAD_REQUEST_STATUS, 
+                message : error?.errors?.[0]
+            })
+        }
+
+        next(error)
     }
 }
 
-export const changePassword = async (req, res) => {
+export const changePassword = async (req, res, next) => {
+    const transaction = await db.sequelize.transaction();
     try {
         const { password } = req.body;
 
-        await changePasswordSchema.validate(req.body);
+        await validation.changePasswordSchema.validate(req.body);
         
-        const hashedPassword = hashPassword(password);
+        const hashedPassword = encryption.hashPassword(password);
 
         await User?.update(
             { password: hashedPassword }, 
@@ -291,24 +341,49 @@ export const changePassword = async (req, res) => {
             }
         );
 
+        const users = await User?.findAll(
+            { 
+                where : {
+                    id : req.user.id
+                },
+                attributes : {
+                    exclude : ["password"]
+                }
+            }
+        );
+
         res.status(200).json({ 
             message : "Changed Password Success, Please Login Again",
         })
+        await transaction.commit();
     } catch (error) {
-        console.log(error)
-        res.status(500).json({
-            message: "Something went wrong",
-            error : error?.message || error
-        });
+        await transaction.rollback();
+        if (error instanceof ValidationError) {
+            return next({ 
+                status : errorMiddleware.BAD_REQUEST_STATUS , 
+                message : error?.errors?.[0] 
+            })
+        }
+        next(error)
     }
 }
 
-export const changeEmail = async (req, res) => {
+export const changeEmail = async (req, res, next) => {
+    const transaction = await db.sequelize.transaction();
     try {
         const { email } = req.body;
 
-        await changeEmailSchema.validate(req.body);
+        await validation.EmailValidationSchema.validate(req.body);
         
+        const emailExists = await User?.findOne({ 
+            where: { email }
+        });
+
+        if (emailExists) throw ({ 
+            status : errorMiddleware.BAD_REQUEST_STATUS, 
+            message : errorMiddleware.EMAIL_ALREADY_EXISTS 
+        });
+
         await User?.update(
             { 
                 email,
@@ -316,7 +391,7 @@ export const changeEmail = async (req, res) => {
             }, 
             { 
                 where: {
-                    id : id
+                    id : req.user.id
                 }
             }
         );
@@ -332,13 +407,13 @@ export const changeEmail = async (req, res) => {
             }
         );
                 
-        const accessToken = createToken({ 
+        const accessToken = tokenHelper.createToken({ 
             id: user?.dataValues?.id, 
             username : user?.dataValues?.username 
         });
 
         const template = fs.readFileSync(path.join(process.cwd(), "templates", "email.html"), "utf8");
-        const message  = handlebars.compile(template)({ link : `http://localhost:5000/api/auth/users/verification/${accessToken}` })
+        const message  = handlebars.compile(template)({ link : `http://localhost:3000/verification/${accessToken}` })
 
         const mailOptions = {
             from: config.GMAIL,
@@ -354,20 +429,36 @@ export const changeEmail = async (req, res) => {
         res.status(200).json({ 
             message : "Changed Email Success, Please Check Your Email to verify", 
         })
+
+        await transaction.commit();
     } catch (error) {
-        console.log(error)
-        res.status(500).json({
-            message: "Something went wrong",
-            error : error?.message || error
-        });
+        await transaction.rollback();
+
+        if (error instanceof ValidationError) {
+            return next({
+                status : errorMiddleware.BAD_REQUEST_STATUS, 
+                message : error?.errors?.[0]
+            })
+        }
+        next(error)
     }
 }
 
-export const changePhone = async (req, res) => {
+export const changePhone = async (req, res, next) => {
+    const transaction = await db.sequelize.transaction();
     try {
         const { phone } = req.body;
         
-        await changePhoneSchema.validate(req.body);
+        await validation.changePhoneSchema.validate(req.body);
+
+        const phoneExist = await User?.findOne(
+            { where : { phone } }
+        );
+
+        if (phoneExist) throw ({ 
+            status : errorMiddleware.BAD_REQUEST_STATUS, 
+            message : errorMiddleware.PHONE_ALREADY_EXISTS 
+        })
 
         await User?.update(
             { 
@@ -392,13 +483,13 @@ export const changePhone = async (req, res) => {
             }
         );
                 
-        const accessToken = createToken({ 
+        const accessToken = tokenHelper.createToken({ 
             id: user?.dataValues?.id, 
             username : user?.dataValues?.username 
         });
 
         const template = fs.readFileSync(path.join(process.cwd(), "templates", "email.html"), "utf8");
-        const message  = handlebars.compile(template)({ link : `http://localhost:5000/api/auth/users/verification/${accessToken}` })
+        const message  = handlebars.compile(template)({ link : `http://localhost:3000/verification/${accessToken}` })
 
         const mailOptions = {
             from: config.GMAIL,
@@ -414,19 +505,30 @@ export const changePhone = async (req, res) => {
         res.status(200).json({ 
             message : "Changed Phone Number Success, Please Verify Again before Login",
         })
+
+        await transaction.commit();
     } catch (error) {
-        console.log(error)
-        res.status(404).json({
-            message: "Something went wrong",
-            error : error?.message || error
-        });
+        await transaction.rollback();
+
+        if (error instanceof ValidationError) {
+            return next({
+                status : errorMiddleware.BAD_REQUEST_STATUS, 
+                message : error?.errors?.[0]
+            })
+        }
+
+        next(error)
     }
 }
 
-export const changeProfile = async (req, res) => {
+export const changeProfile = async (req, res, next) => {
+    const transaction = await db.sequelize.transaction();
     try {
         if (!req.file) {
-            throw new ({ status: 400, message: "Please upload an image." })
+            return next ({ 
+                status: errorMiddleware.BAD_REQUEST_STATUS,
+                message: "Please upload an image." 
+            })
         }
 
         const user = await User?.findOne(
@@ -462,11 +564,31 @@ export const changeProfile = async (req, res) => {
                 imageUrl : req.file?.filename 
             }
         )
+        await transaction.commit();
     } catch (error) {
-        console.log(error)
-        res.status(404).json({
-            message: "Something went wrong",
-            error : error?.message || error
-        });
+        await transaction.rollback();
+        next(error)
+    }
+}
+
+export const getProfilePicture = async (req, res, next) => {
+    try {
+        const user = await User?.findOne(
+            { where : { id : req.user.id } }
+        );
+
+        if (!user) throw ({ 
+            status : errorMiddleware.BAD_REQUEST_STATUS, 
+            message : errorMiddleware.USER_DOES_NOT_EXISTS 
+        })
+
+        if (!user.profile_pic) throw ({ 
+            status : errorMiddleware.NOT_FOUND_STATUS, 
+            message : "Profile Picture is empty"
+        })
+
+        res.status(200).json(config.URL_PIC + user.profile_pic) //https://res.cloudinary.com/dpgk4f2eu/image/upload/f_auto,q_auto/v1/
+    } catch (error) {
+        next(error)
     }
 }
