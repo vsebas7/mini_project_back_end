@@ -239,14 +239,26 @@ export const forgotPassword = async (req, res, next) => {
             username : isUserExist?.dataValues?.username 
         });
 
+        await User?.update(
+            { 
+                verify_token : accessToken,
+                expired_token : moment().add(1, "days").format("YYYY-MM-DD HH:mm:ss")
+            }, 
+            { 
+                where : { 
+                    id : isUserExist?.dataValues?.id
+                } 
+            }
+        )
+
         const template = fs.readFileSync(path.join(process.cwd(), "templates", "email.html"), "utf8");
 
-        const message  = handlebars.compile(template)({ link : `http://localhost:3000/verification/${accessToken}` })
+        const message  = handlebars.compile(template)({ link : `http://localhost:3000/reset_password/${accessToken}` })
 
         const mailOptions = {
             from: config.GMAIL,
             to: email,
-            subject: "Forgot Password",
+            subject: "Reset Password",
             html: message
         }
 
@@ -276,13 +288,13 @@ export const verificationUser = async (req, res, next) => {
 
         const decodedToken = tokenHelper.verifyToken(token);
 
-        const user = await User?.findOne({ 
+        const userExists = await User?.findOne({ 
             where : { 
                 id : decodedToken.id 
             } 
         });
 
-        if (!user) throw ({ 
+        if (!userExists) throw ({ 
             status : errorMiddleware.NOT_FOUND_STATUS, 
             message : errorMiddleware.USER_DOES_NOT_EXISTS 
         });
@@ -327,6 +339,17 @@ export const changeUsername = async (req, res, next) => {
             message : errorMiddleware.USERNAME_ALREADY_EXISTS 
         });
 
+        const user = await User?.findOne(
+            { 
+                where : {
+                    id : req.user.id
+                },
+                attributes : {
+                    exclude : ["password"]
+                }
+            }
+        );
+
         const accessToken = tokenHelper.createToken({ 
             id: user?.dataValues?.id, 
             username : user?.dataValues?.username 
@@ -344,28 +367,15 @@ export const changeUsername = async (req, res, next) => {
                     id: req.user.id
                 }
             }
-        );
-
-        const user = await User?.findOne(
-            { 
-                where : {
-                    id : req.user.id
-                },
-                attributes : {
-                    exclude : ["password"]
-                }
-            }
-        );
+        );      
         
-        const email = user?.dataValues?.email
-
         const template = fs.readFileSync(path.join(process.cwd(), "templates", "email.html"), "utf8");
 
         const message  = handlebars.compile(template)({ link : `http://localhost:3000/verification/${accessToken}` })
 
         const mailOptions = {
             from: config.GMAIL,
-            to: email,
+            to: user?.dataValues?.email,
             subject: "Verification Change Username ",
             html: message
         }
@@ -404,7 +414,9 @@ export const changePassword = async (req, res, next) => {
         const hashedPassword = encryption.hashPassword(password);
 
         await User?.update(
-            { password: hashedPassword }, 
+            { 
+                password: hashedPassword 
+            }, 
             { 
                 where: {
                     id: req.user.id
@@ -459,6 +471,17 @@ export const changeEmail = async (req, res, next) => {
             message : errorMiddleware.EMAIL_ALREADY_EXISTS 
         });
 
+        const user = await User?.findOne(
+            { 
+                where : {
+                    id : req.user.id
+                },
+                attributes : {
+                    exclude : ["password"]
+                }
+            }
+        );
+
         const accessToken = tokenHelper.createToken({ 
             id: user?.dataValues?.id, 
             username : user?.dataValues?.username 
@@ -477,18 +500,7 @@ export const changeEmail = async (req, res, next) => {
                 }
             }
         );
-
-         const user = await User?.findOne(
-            { 
-                where : {
-                    id : req.user.id
-                },
-                attributes : {
-                    exclude : ["password"]
-                }
-            }
-        );
-
+        
         const template = fs.readFileSync(path.join(process.cwd(), "templates", "email.html"), "utf8");
 
         const message  = handlebars.compile(template)({ link : `http://localhost:3000/verification/${accessToken}` })
@@ -538,6 +550,17 @@ export const changePhone = async (req, res, next) => {
             status : errorMiddleware.BAD_REQUEST_STATUS, 
             message : errorMiddleware.PHONE_ALREADY_EXISTS 
         })
+
+        const user = await User?.findOne(
+            { 
+                where : {
+                    id : req.user.id
+                },
+                attributes : {
+                    exclude : ["password"]
+                }
+            }
+        );
                 
         const accessToken = tokenHelper.createToken({ 
             id: user?.dataValues?.id, 
@@ -556,18 +579,7 @@ export const changePhone = async (req, res, next) => {
                     id: req.user.id
                 }
             }
-        );
-        
-        const user = await User?.findOne(
-            { 
-                where : {
-                    id : req.user.id
-                },
-                attributes : {
-                    exclude : ["password"]
-                }
-            }
-        );
+        );        
 
         const template = fs.readFileSync(path.join(process.cwd(), "templates", "email.html"), "utf8");
 

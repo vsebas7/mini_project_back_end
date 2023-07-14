@@ -56,7 +56,7 @@ export const getBlogs = async (req, res, next) => {
             message : errorMiddleware.DATA_NOT_FOUND 
         });
         res.status(200).json({ 
-            message: "Blogs fetched", 
+            message: "success", 
             data: {
                 current_page: page,
                 total_pages : pages,
@@ -120,7 +120,7 @@ export const publishBlog = async (req, res, next) => {
         res.status(200).json(
             { 
                 type: "success", 
-                message: "Blog publish success", 
+                message: "Blog published", 
                 data: blog 
             }
         );
@@ -173,7 +173,7 @@ export const deleteBlogs = async (req, res, next) => {
 
         res.status(200).json({ 
             type : 'success',
-            message : `Blog dengan id ${id_blog} berhasil di delete`
+            message : "Delete success"
         })
     } catch (error) {
         next(error)
@@ -218,6 +218,7 @@ export const likeBlog = async (req, res, next) => {
         })
 
         res.status(200).json({
+            type: "success",
             message : "Like Added",
             like
         })
@@ -230,7 +231,12 @@ export const categoryBlogs = async (req, res, next) =>{
     try {
         const category = await Category?.findAll();
 
-        res.status(200).json({ category })
+        res.status(200).json(
+            { 
+                type : "success",
+                category 
+            }
+        )
 
     } catch (error) {
         next(error)
@@ -252,7 +258,9 @@ export const favoriteBlogs = async (req, res, next) =>{
                     where : id_cat ? {categoryId : id_cat} : {},
                 }
             ],
-            order : [['total_likes','DESC']]
+            order : [
+                ['total_likes','DESC']
+            ]
         });
 
         if(!favorite.length) throw (
@@ -263,7 +271,7 @@ export const favoriteBlogs = async (req, res, next) =>{
         );
 
         res.status(200).json({ 
-            message : "success",
+            type : "success",
             favorite 
         })
 
@@ -295,7 +303,7 @@ export const userFavoriteBlogs = async (req, res, next) =>{
         );
 
         res.status(200).json({ 
-            message : "success",
+            type : "success",
             UserFavorite 
         })
 
@@ -321,7 +329,7 @@ export const userBlogs = async (req, res, next) =>{
         );
 
         res.status(200).json({ 
-            message : "success",
+            type : "success",
             UserBlog 
         })
 
@@ -345,6 +353,7 @@ export const getBlogPicture = async (req, res, next) => {
         })
 
         if (!blog.blog_pic) throw ({ 
+            type : "error",
             status : errorMiddleware.NOT_FOUND_STATUS, 
             message : "Blog Picture is empty"
         })
