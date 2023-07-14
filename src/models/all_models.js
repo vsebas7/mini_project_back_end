@@ -94,7 +94,15 @@ export const User = db.sequelize.define("users", {
         type : db.Sequelize.BOOLEAN,
         allowNull : false,
         defaultValue : 0
-    }
+    },
+    verify_token : {
+        type : db.Sequelize.TEXT("long"),
+        allowNull : true,
+    },
+    expired_token : {
+        type : db.Sequelize.TIME,
+        allowNull : true,
+    },
 },
 { timestamps: false }
 )
@@ -122,7 +130,6 @@ export const Like = db.sequelize.define("likes", {
 },
 { timestamps: false }
 )
-
 
 Blog.belongsTo(Category, {foreignKey : 'categoryId'});
 Blog.belongsTo(User, {foreignKey : 'userId'});

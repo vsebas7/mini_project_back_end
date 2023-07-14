@@ -1,5 +1,5 @@
 import { ValidationError } from "yup"
-import { Blog, User } from "../../models/all_models.js"
+import { User } from "../../models/all_models.js"
 import handlebars from "handlebars"
 import fs from "fs"
 import path from "path"
@@ -12,6 +12,7 @@ import * as tokenHelper from "../../helpers/token.js"
 import * as errorMiddleware from "../../middleware/error.handler.js"
 import db from "../../models/index.js"
 import { Op } from "sequelize";
+import moment from "moment";
 
 export const register = async (req, res, next) => {
     const transaction = await db.sequelize.transaction();
@@ -33,23 +34,26 @@ export const register = async (req, res, next) => {
             status : errorMiddleware.BAD_REQUEST_STATUS, 
             message : errorMiddleware.USER_ALREADY_EXISTS 
         });
-
-        const hashedPassword = encryption.hashPassword(password);
-        const user = await User?.create({
-            username,
-            password : hashedPassword,
-            email,
-            phone
-        });
-
-        delete user?.dataValues?.password;
-
+        
         const accessToken = tokenHelper.createToken(
             { 
                 id: user?.dataValues?.id, 
                 username : user?.dataValues?.username 
             }
         );
+
+        const hashedPassword = encryption.hashPassword(password);
+
+        const user = await User?.create({
+            username,
+            password : hashedPassword,
+            email,
+            phone,
+            verify_token : accessToken,
+            expired_token : moment().add(1,"days").format("YYYY-MM-DD HH:mm:ss")
+        });
+
+        delete user?.dataValues?.password;
 
         res.header("Authorization", `Bearer ${accessToken}`)
             .status(200)
@@ -59,6 +63,7 @@ export const register = async (req, res, next) => {
             });
 
         const template = fs.readFileSync(path.join(process.cwd(), "templates", "email.html"), "utf8");
+
         const message  = handlebars.compile(template)({ link : `http://localhost:3000/verification/${accessToken}` })
 
         const mailOptions = {
@@ -67,6 +72,7 @@ export const register = async (req, res, next) => {
             subject: "Verification",
             html: message
         }
+
         transporter.sendMail(mailOptions, (error, info) => {
             if (error) throw error;
             console.log("Email sent: " + info.response);
@@ -83,6 +89,7 @@ export const register = async (req, res, next) => {
                 message : error?.errors?.[0]
             })
         }
+
         next(error)
     }
 }
@@ -90,27 +97,79 @@ export const register = async (req, res, next) => {
 export const login = async (req, res, next) => {
     try {
         const { username, password } = req.body;
+
         await validation.LoginValidationSchema.validate(req.body);
 
         const isAnEmail = await validation.IsEmail(username);
+
         const query = isAnEmail ? { email : username } : { username };
 
-        const userExists = await User?.findOne({ where: query });
+        const userExists = await User?.findOne(
+            {
+                where: query,
+                attributes : {
+                    exclude : ["verify_token","expired_token"]
+                } 
+            }
+        );
+
         if (!userExists) throw ({ 
             status : errorMiddleware.BAD_REQUEST_STATUS, 
             message : errorMiddleware.USER_DOES_NOT_EXISTS 
         })
         
         const isPasswordCorrect = encryption.comparePassword(password, userExists?.dataValues?.password);
+
         if (!isPasswordCorrect) throw ({ 
             status : errorMiddleware.BAD_REQUEST_STATUS,
             message : errorMiddleware.INCORRECT_PASSWORD 
-        });
+        });      
 
-        if(!userExists.dataValues.isVerified)throw ({ 
-            status : errorMiddleware.UNAUTHORIZED_STATUS, 
-            message : errorMiddleware.UNVERIFIED
-        })
+        if(!userExists.dataValues.isVerified){
+            const isTokenExpired = moment().isAfter(userExists?.dataValues?.expired_token);
+
+            if(isTokenExpired){
+                const accessToken = tokenHelper.createToken(
+                    { 
+                        id: userExists?.dataValues?.id, 
+                        username : userExists?.dataValues?.username 
+                    }
+                );
+
+                await User?.update(
+                    { 
+                        verify_token : accessToken,
+                        expired_token : moment().add(1, "days").format("YYYY-MM-DD HH:mm:ss")
+                    }, 
+                    { 
+                        where : { 
+                            id : userExists.dataValues.id
+                        } 
+                    }
+                )
+
+                const template = fs.readFileSync(path.join(process.cwd(), "templates", "email.html"), "utf8");
+
+                const message  = handlebars.compile(template)({ link : `http://localhost:3000/verification/${accessToken}` })
+
+                const mailOptions = {
+                    from: config.GMAIL,
+                    to: userExists?.dataValues?.email,
+                    subject: "Verification",
+                    html: message
+                }
+
+                transporter.sendMail(mailOptions, (error, info) => {
+                    if (error) throw error;
+                    console.log("Email sent: " + info.response);
+                })
+            }
+
+            return next({
+                status : errorMiddleware.UNAUTHORIZED_STATUS, 
+                message : errorMiddleware.UNVERIFIED
+            })
+        }
         
         const accessToken = tokenHelper.createTokenLogin({ 
             id: userExists?.dataValues?.id, 
@@ -153,6 +212,7 @@ export const keepLogin = async (req, res, next) => {
             status : errorMiddleware.UNAUTHORIZED_STATUS, 
             message : errorMiddleware.UNVERIFIED
         })
+
         res.status(200).json({ users })
     } catch (error) {
         next(error)
@@ -180,6 +240,7 @@ export const forgotPassword = async (req, res, next) => {
         });
 
         const template = fs.readFileSync(path.join(process.cwd(), "templates", "email.html"), "utf8");
+
         const message  = handlebars.compile(template)({ link : `http://localhost:3000/verification/${accessToken}` })
 
         const mailOptions = {
@@ -188,6 +249,7 @@ export const forgotPassword = async (req, res, next) => {
             subject: "Forgot Password",
             html: message
         }
+
         transporter.sendMail(mailOptions, (error, info) => {
             if (error) throw error;
             console.log("Email sent: " + info.response);
@@ -211,6 +273,7 @@ export const verificationUser = async (req, res, next) => {
     const transaction = await db.sequelize.transaction();
     try {
         const { token } = req.body;
+
         const decodedToken = tokenHelper.verifyToken(token);
 
         const user = await User?.findOne({ 
@@ -225,11 +288,15 @@ export const verificationUser = async (req, res, next) => {
         });
 
         await User?.update(
-            { isVerified : 1 }, 
+            { 
+                isVerified : 1,
+                verify_token : null,
+                expired_token : null 
+            }, 
             { 
                 where : { 
                     id : decodedToken.id 
-                } 
+                }
             }
         );
 
@@ -260,10 +327,17 @@ export const changeUsername = async (req, res, next) => {
             message : errorMiddleware.USERNAME_ALREADY_EXISTS 
         });
 
+        const accessToken = tokenHelper.createToken({ 
+            id: user?.dataValues?.id, 
+            username : user?.dataValues?.username 
+        });
+
         await User?.update(
             { 
                 username,
-                isVerified : 0
+                isVerified : 0,
+                verify_token : accessToken,
+                expired_token : moment().add(1,"days").format("YYYY-MM-DD HH:mm:ss")
             }, 
             { 
                 where: {
@@ -284,21 +358,18 @@ export const changeUsername = async (req, res, next) => {
         );
         
         const email = user?.dataValues?.email
-        
-        const accessToken = tokenHelper.createToken({ 
-            id: user?.dataValues?.id, 
-            username : user?.dataValues?.username 
-        });
 
         const template = fs.readFileSync(path.join(process.cwd(), "templates", "email.html"), "utf8");
+
         const message  = handlebars.compile(template)({ link : `http://localhost:3000/verification/${accessToken}` })
 
         const mailOptions = {
             from: config.GMAIL,
             to: email,
-            subject: "Verification ",
+            subject: "Verification Change Username ",
             html: message
         }
+
         transporter.sendMail(mailOptions, (error, info) => {
             if (error) throw error;
             console.log("Email sent: " + info.response);
@@ -354,16 +425,20 @@ export const changePassword = async (req, res, next) => {
 
         res.status(200).json({ 
             message : "Changed Password Success, Please Login Again",
+            users
         })
+
         await transaction.commit();
     } catch (error) {
         await transaction.rollback();
+
         if (error instanceof ValidationError) {
             return next({ 
                 status : errorMiddleware.BAD_REQUEST_STATUS , 
                 message : error?.errors?.[0] 
             })
         }
+
         next(error)
     }
 }
@@ -384,10 +459,17 @@ export const changeEmail = async (req, res, next) => {
             message : errorMiddleware.EMAIL_ALREADY_EXISTS 
         });
 
+        const accessToken = tokenHelper.createToken({ 
+            id: user?.dataValues?.id, 
+            username : user?.dataValues?.username 
+        });
+
         await User?.update(
             { 
                 email,
-                isVerified : 0
+                isVerified : 0,
+                verify_token : accessToken,
+                expired_token : moment().add(1,"days").format("YYYY-MM-DD HH:mm:ss")
             }, 
             { 
                 where: {
@@ -406,21 +488,18 @@ export const changeEmail = async (req, res, next) => {
                 }
             }
         );
-                
-        const accessToken = tokenHelper.createToken({ 
-            id: user?.dataValues?.id, 
-            username : user?.dataValues?.username 
-        });
 
         const template = fs.readFileSync(path.join(process.cwd(), "templates", "email.html"), "utf8");
+
         const message  = handlebars.compile(template)({ link : `http://localhost:3000/verification/${accessToken}` })
 
         const mailOptions = {
             from: config.GMAIL,
             to: email,
-            subject: "Verification ",
+            subject: "Verification Change Email",
             html: message
         }
+
         transporter.sendMail(mailOptions, (error, info) => {
             if (error) throw error;
             console.log("Email sent: " + info.response);
@@ -459,11 +538,18 @@ export const changePhone = async (req, res, next) => {
             status : errorMiddleware.BAD_REQUEST_STATUS, 
             message : errorMiddleware.PHONE_ALREADY_EXISTS 
         })
+                
+        const accessToken = tokenHelper.createToken({ 
+            id: user?.dataValues?.id, 
+            username : user?.dataValues?.username 
+        });
 
         await User?.update(
             { 
                 phone,
-                isVerified : 0
+                isVerified : 0,
+                verify_token : accessToken,
+                expired_token : moment().add(1,"days").format("YYYY-MM-DD HH:mm:ss")
             }, 
             { 
                 where: {
@@ -482,21 +568,18 @@ export const changePhone = async (req, res, next) => {
                 }
             }
         );
-                
-        const accessToken = tokenHelper.createToken({ 
-            id: user?.dataValues?.id, 
-            username : user?.dataValues?.username 
-        });
 
         const template = fs.readFileSync(path.join(process.cwd(), "templates", "email.html"), "utf8");
+
         const message  = handlebars.compile(template)({ link : `http://localhost:3000/verification/${accessToken}` })
 
         const mailOptions = {
             from: config.GMAIL,
             to: user?.dataValues?.email,
-            subject: "Verification ",
+            subject: "Verification Change Phone Number",
             html: message
         }
+
         transporter.sendMail(mailOptions, (error, info) => {
             if (error) throw error;
             console.log("Email sent: " + info.response);
@@ -564,6 +647,7 @@ export const changeProfile = async (req, res, next) => {
                 imageUrl : req.file?.filename 
             }
         )
+
         await transaction.commit();
     } catch (error) {
         await transaction.rollback();
@@ -574,7 +658,12 @@ export const changeProfile = async (req, res, next) => {
 export const getProfilePicture = async (req, res, next) => {
     try {
         const user = await User?.findOne(
-            { where : { id : req.user.id } }
+            { 
+                where : 
+                { 
+                    id : req.user.id 
+                } 
+            }
         );
 
         if (!user) throw ({ 

@@ -107,7 +107,7 @@ export const publishBlog = async (req, res, next) => {
 
         const blog = await Blog?.create({ 
             userId : req.user.id,
-            createdAt: moment().format(),
+            createdAt: moment().format("YYYY-MM-DD HH:mm:ss"),
             title,
             content,
             country,
@@ -214,7 +214,7 @@ export const likeBlog = async (req, res, next) => {
         const like = await Like?.create({
             userId : req.user.id,
             blogId : id_blog,
-            date : moment().format()
+            date : moment().format("YYYY-MM-DD HH:mm:ss")
         })
 
         res.status(200).json({
