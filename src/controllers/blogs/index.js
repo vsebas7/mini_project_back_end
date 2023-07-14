@@ -32,7 +32,7 @@ export const getBlogs = async (req, res, next) => {
                 include : [
                     {
                         model: User,
-                        attributes: ['username']
+                        attributes: ['username','profile_pic']
                     },
                     {
                         model: Category,
