@@ -15,6 +15,6 @@ router.get("/category_blog", BlogControllers.categoryBlogs)
 router.get("/favorite_blog", BlogControllers.favoriteBlogs)
 router.get("/favorite_blog/user", verifyUser, BlogControllers.userFavoriteBlogs)
 router.get("/user", verifyUser, BlogControllers.userBlogs)
-router.get("/blog_picture/:id_blog", verifyUser, BlogControllers.getBlogPicture)
+router.get("/blog_picture/:id_blog", BlogControllers.getBlogPicture)
 
 export default router

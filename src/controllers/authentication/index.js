@@ -34,13 +34,6 @@ export const register = async (req, res, next) => {
             status : errorMiddleware.BAD_REQUEST_STATUS, 
             message : errorMiddleware.USER_ALREADY_EXISTS 
         });
-        
-        const accessToken = tokenHelper.createToken(
-            { 
-                id: user?.dataValues?.id, 
-                username : user?.dataValues?.username 
-            }
-        );
 
         const hashedPassword = encryption.hashPassword(password);
 
@@ -48,10 +41,27 @@ export const register = async (req, res, next) => {
             username,
             password : hashedPassword,
             email,
-            phone,
-            verify_token : accessToken,
-            expired_token : moment().add(1,"days").format("YYYY-MM-DD HH:mm:ss")
+            phone
         });
+
+        const accessToken = tokenHelper.createToken(
+            { 
+                id: user?.dataValues?.id, 
+                username : user?.dataValues?.username 
+            }
+        );
+
+        await User?.update(
+            { 
+                verify_token : accessToken,
+                expired_token : moment().add(1, "days").format("YYYY-MM-DD HH:mm:ss")
+            }, 
+            { 
+                where : { 
+                    id : user?.dataValues?.id, 
+                } 
+            }
+        )    
 
         delete user?.dataValues?.password;
 
@@ -106,10 +116,7 @@ export const login = async (req, res, next) => {
 
         const userExists = await User?.findOne(
             {
-                where: query,
-                attributes : {
-                    exclude : ["verify_token","expired_token"]
-                } 
+                where: query
             }
         );
 
@@ -281,6 +288,76 @@ export const forgotPassword = async (req, res, next) => {
     }
 }
 
+export const resetPassword = async (req, res, next) => {
+    const transaction = await db.sequelize.transaction();
+    try {
+        const { password } = req.body;
+
+        await validation.resetPasswordSchema.validate(req.body);
+
+        const userExists = await User?.findOne(
+            {
+                where: 
+                {
+                    id : req.user.id
+                },
+                attributes : {
+                    exclude : ["verify_token","expired_token"]
+                } 
+            }
+        );
+
+        if (!userExists) throw ({ 
+            status : errorMiddleware.BAD_REQUEST_STATUS, 
+            message : errorMiddleware.USER_DOES_NOT_EXISTS 
+        })
+
+        const hashedPassword = encryption.hashPassword(password);
+
+        await User?.update(
+            { 
+                password: hashedPassword,
+                verify_token : null,
+                expired_token : null 
+            }, 
+            { 
+                where: {
+                    id: req.user.id
+                }
+            }
+        );
+
+        const users = await User?.findAll(
+            { 
+                where : {
+                    id : req.user.id
+                },
+                attributes : {
+                    exclude : ["password"]
+                }
+            }
+        );
+
+        res.status(200).json({ 
+            message : "Reset Password Success, Please Login Again",
+            users
+        })
+
+        await transaction.commit();
+    } catch (error) {
+        await transaction.rollback();
+
+        if (error instanceof ValidationError) {
+            return next({ 
+                status : errorMiddleware.BAD_REQUEST_STATUS , 
+                message : error?.errors?.[0] 
+            })
+        }
+
+        next(error)
+    }
+}
+
 export const verificationUser = async (req, res, next) => {
     const transaction = await db.sequelize.transaction();
     try {
@@ -407,11 +484,30 @@ export const changeUsername = async (req, res, next) => {
 export const changePassword = async (req, res, next) => {
     const transaction = await db.sequelize.transaction();
     try {
-        const { password } = req.body;
+        const { currentPassword, newPassword } = req.body;
 
         await validation.changePasswordSchema.validate(req.body);
+
+        const user = await User?.findOne(
+            {
+                where: 
+                {
+                    id : req.user.id
+                },
+                attributes : {
+                    exclude : ["verify_token","expired_token"]
+                } 
+            }
+        );
+
+        const isPasswordCorrect = encryption.comparePassword(currentPassword, user?.dataValues?.password);
+
+        if (!isPasswordCorrect) throw ({ 
+            status : errorMiddleware.BAD_REQUEST_STATUS,
+            message : errorMiddleware.INCORRECT_PASSWORD 
+        });  
         
-        const hashedPassword = encryption.hashPassword(password);
+        const hashedPassword = encryption.hashPassword(newPassword);
 
         await User?.update(
             { 
@@ -551,7 +647,7 @@ export const changePhone = async (req, res, next) => {
             message : errorMiddleware.PHONE_ALREADY_EXISTS 
         })
 
-        const user = await User?.findOne(
+        const userExist = await User?.findOne(
             { 
                 where : {
                     id : req.user.id
@@ -561,44 +657,38 @@ export const changePhone = async (req, res, next) => {
                 }
             }
         );
-                
-        const accessToken = tokenHelper.createToken({ 
-            id: user?.dataValues?.id, 
-            username : user?.dataValues?.username 
-        });
+
+        if (!userExist) throw ({
+            status : errorMiddleware.NOT_FOUND_STATUS,
+            message : errorMiddleware.USER_DOES_NOT_EXISTS
+        })
 
         await User?.update(
-            { 
-                phone,
-                isVerified : 0,
-                verify_token : accessToken,
-                expired_token : moment().add(1,"days").format("YYYY-MM-DD HH:mm:ss")
-            }, 
-            { 
-                where: {
-                    id: req.user.id
+            {
+                phone
+            },
+            {
+                where : 
+                {
+                    id : req.user.id
                 }
             }
-        );        
-
-        const template = fs.readFileSync(path.join(process.cwd(), "templates", "email.html"), "utf8");
-
-        const message  = handlebars.compile(template)({ link : `http://localhost:3000/verification/${accessToken}` })
-
-        const mailOptions = {
-            from: config.GMAIL,
-            to: user?.dataValues?.email,
-            subject: "Verification Change Phone Number",
-            html: message
-        }
-
-        transporter.sendMail(mailOptions, (error, info) => {
-            if (error) throw error;
-            console.log("Email sent: " + info.response);
-        })
+        )
+        const user = await User?.findOne(
+            { 
+                where : 
+                {
+                    id : req.user.id
+                },
+                attributes : {
+                    exclude : ['password']
+                }
+            }
+        );
 
         res.status(200).json({ 
             message : "Changed Phone Number Success, Please Verify Again before Login",
+            user
         })
 
         await transaction.commit();

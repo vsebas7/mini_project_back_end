@@ -16,9 +16,8 @@ export const getBlogs = async (req, res, next) => {
             offset: page > 1 ? parseInt(page - 1) * 5 : 0,
             limit: page ? 5 : undefined,
         }
-        if(
-            sort !== undefined && ( sort !== "DESC" || sort !== "ASC")
-        )throw ({ 
+
+        if( sort !== undefined && sort !== "DESC" && sort !== "ASC" )throw ({ 
             status : errorMiddleware.BAD_REQUEST_STATUS, 
             message : errorMiddleware.BAD_REQUEST 
         });
@@ -47,7 +46,7 @@ export const getBlogs = async (req, res, next) => {
             }
         );
 
-        const total = await Blog?.count();
+        const total = id_cat || id_cat && page ? await Blog?.count({where: {categoryId : id_cat}}) : await Blog?.count();
 
         const pages = page ? Math.ceil(total / options.limit) : undefined;
         
@@ -55,6 +54,7 @@ export const getBlogs = async (req, res, next) => {
             status : errorMiddleware.NOT_FOUND_STATUS, 
             message : errorMiddleware.DATA_NOT_FOUND 
         });
+        
         res.status(200).json({ 
             message: "success", 
             data: {
@@ -114,7 +114,7 @@ export const publishBlog = async (req, res, next) => {
             categoryId : category,
             url,
             keywords, 
-            blog_pic : req?.file?.path 
+            blog_pic : req?.file?.filename 
         });
 
         res.status(200).json(
